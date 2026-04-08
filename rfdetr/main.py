@@ -36,6 +36,8 @@ import torch
 from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, DistributedSampler
 
+
+
 import rfdetr.util.misc as utils
 from rfdetr.datasets import build_dataset, get_coco_api_from_dataset
 from rfdetr.engine import evaluate, train_one_epoch
@@ -45,6 +47,7 @@ from rfdetr.util.drop_scheduler import drop_scheduler
 from rfdetr.util.files import download_file
 from rfdetr.util.get_param_dicts import get_param_dict
 from rfdetr.util.utils import ModelEma, BestMetricHolder, clean_state_dict
+
 
 if str(os.environ.get("USE_FILE_SYSTEM_SHARING", "False")).lower() in ["true", "1"]:
     import torch.multiprocessing
@@ -981,6 +984,11 @@ def populate_args(
     early_stopping_min_delta=0.001,
     early_stopping_use_ema=False,
     gradient_checkpointing=False,
+
+    # Add these new parameters:
+    cka_lambda=0.0,  # CKA contrastive loss weight
+    cka_scales=None,  # CKA scales to use
+    
     # Additional
     subcommand=None,
     **extra_kwargs  # To handle any unexpected arguments
@@ -1081,6 +1089,8 @@ def populate_args(
         early_stopping_min_delta=early_stopping_min_delta,
         early_stopping_use_ema=early_stopping_use_ema,
         gradient_checkpointing=gradient_checkpointing,
+        cka_lambda=cka_lambda,
+        cka_scales=cka_scales,
         **extra_kwargs
     )
     return args

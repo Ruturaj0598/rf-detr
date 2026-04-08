@@ -159,6 +159,8 @@ class TrainConfig(BaseModel):
     class_names: List[str] = None
     run_test: bool = True
     segmentation_head: bool = False
+    cka_lambda: float = 0.0  # CKA contrastive loss weight (0 = disabled)
+    cka_scales: Optional[List[int]] = None  # Optional: specific encoder levels
 
 
 class SegmentationTrainConfig(TrainConfig):

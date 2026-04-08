@@ -25,6 +25,9 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 from torch import nn
+from typing import Callable
+from rfdetr.util.misc import NestedTensor
+
 
 from rfdetr.util import box_ops
 from rfdetr.util.misc import (NestedTensor, nested_tensor_from_tensor_list,
@@ -35,6 +38,25 @@ from rfdetr.models.backbone import build_backbone
 from rfdetr.models.matcher import build_matcher
 from rfdetr.models.transformer import build_transformer
 from rfdetr.models.segmentation_head import SegmentationHead, get_uncertain_point_coords_with_randomness, point_sample
+
+# Save this as lwdetr.py in: rf-detr/rfdetr/models/lwdetr.py
+
+from rfdetr.util import box_ops
+from rfdetr.util.misc import (NestedTensor, nested_tensor_from_tensor_list,
+                       accuracy, get_world_size,
+                       is_dist_avail_and_initialized)
+
+from rfdetr.models.backbone import build_backbone
+from rfdetr.models.matcher import build_matcher
+from rfdetr.models.transformer import build_transformer
+from rfdetr.models.segmentation_head import SegmentationHead, get_uncertain_point_coords_with_randomness, point_sample
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import copy
+import math
+from typing import Callable
 
 class LWDETR(nn.Module):
     """ This is the Group DETR v3 module that performs object detection """
@@ -129,30 +151,22 @@ class LWDETR(nn.Module):
                 m.export()
 
     def forward(self, samples: NestedTensor, targets=None):
-        """ The forward expects a NestedTensor, which consists of:
-               - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
-               - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
-
-            It returns a dict with the following elements:
-               - "pred_logits": the classification logits (including no-object) for all queries.
-                                Shape= [batch_size x num_queries x num_classes]
-               - "pred_boxes": The normalized boxes coordinates for all queries, represented as
-                               (center_x, center_y, width, height). These values are normalized in [0, 1],
-                               relative to the size of each individual image (disregarding possible padding).
-                               See PostProcess for information on how to retrieve the unnormalized bounding box.
-               - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
-                                dictionnaries containing the two above keys for each decoder layer.
-        """
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
         features, poss = self.backbone(samples)
 
         srcs = []
         masks = []
+        # ============ CKA: Store backbone features ============
+        backbone_features = {}
+        # ====================================================== 
         for l, feat in enumerate(features):
             src, mask = feat.decompose()
             srcs.append(src)
             masks.append(mask)
+            # ============ CKA: Store each scale ============
+            backbone_features[l] = src
+            # ===============================================
             assert mask is not None
 
         if self.training:
@@ -210,6 +224,10 @@ class LWDETR(nn.Module):
                 out = {'pred_logits': cls_enc, 'pred_boxes': ref_enc}
                 if self.segmentation_head is not None:
                     out['pred_masks'] = masks_enc
+
+        # ============ CKA: Add backbone features to output ============
+        out['backbone_features'] = backbone_features
+        # ==============================================================
 
         return out
 
@@ -534,7 +552,7 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         group_detr = self.group_detr if self.training else 1
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
+        outputs_without_aux = {k: v for k, v in outputs.items() if k not in ['aux_outputs', 'backbone_features']}  # ← CKA: exclude backbone_features from loss computation
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets, group_detr=group_detr)
@@ -869,6 +887,7 @@ def build_criterion_and_postprocessors(args):
                                 use_position_supervised_loss=args.use_position_supervised_loss,
                                 ia_bce_loss=args.ia_bce_loss)
     criterion.to(device)
+
     postprocess = PostProcess(num_select=args.num_select)
 
     return criterion, postprocess
